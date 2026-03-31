@@ -506,3 +506,54 @@ https://hrdag.org/about/
 Raleigh, C., Linke, A., Hegre, H., & Karlsen, J. (2010). Introducing ACLED: An
 armed conflict location and event dataset. *Journal of Peace Research*, 47(5),
 651–660. https://doi.org/10.1177/0022343310378914
+
+**Press Freedom & Conflict Data Reliability**
+*(Cited in data completeness scores — see `src/visualize.py: chart_data_completeness`)*
+
+Cohen, D. K., & Green, A. H. (2012). Dueling incentives: Sexual violence in
+Liberia and the politics of human rights advocacy. *Journal of Peace Research*,
+49(3), 445–458. https://doi.org/10.1177/0022343312436769
+*(Demonstrates structural underreporting of sexual violence in conflict datasets
+due to stigma and access constraints.)*
+
+Davenport, C., & Ball, P. (2002). Views to a kill: Exploring the implications
+of source selection in the case of Guatemalan state terror, 1977–1995. *Journal
+of Conflict Resolution*, 46(3), 427–450.
+https://doi.org/10.1177/0022002702046003005
+*(Foundational study showing that source selection in conflict datasets
+systematically biases coverage toward certain types of violence and certain
+perpetrators.)*
+
+Eck, K. (2012). In data we trust? A comparison of UCDP GED and ACLED conflict
+events datasets. *Cooperation and Conflict*, 47(1), 80–94.
+https://doi.org/10.1177/0010836711433559
+*(Direct inter-source comparison revealing highest divergence — proxy for
+undercount uncertainty — in Central Asia, Middle Africa, and parts of
+Central America.)*
+
+Fariss, C. J. (2014). Respect for human rights has improved over time: Modeling
+the changing standard of accountability. *American Political Science Review*,
+108(2), 297–408. https://doi.org/10.1017/S0003055414000070
+*(Demonstrates that apparent improvements in human rights scores partly reflect
+changing measurement standards and latent reporting bias, not only behavioral
+change.)*
+
+Reporters Without Borders. (2023). *World Press Freedom Index 2023*. RSF.
+https://rsf.org/en/index
+*(Annual ranking of 180 countries used as a proxy for structural reporting
+capacity. Lower press freedom = fewer conflict events reach media-based
+datasets like ACLED.)*
+
+Weidmann, N. B. (2016). A closer look at reporting bias in conflict event data.
+*American Journal of Political Science*, 60(4), 825–840.
+https://doi.org/10.1111/ajps.12217
+*(Key empirical study quantifying how media-based conflict datasets
+systematically undercount events in low-press-freedom environments,
+providing the primary justification for weighting completeness scores
+by RSF index values.)*
+
+Weidmann, N. B., & Salehyan, I. (2013). Violence and ethnic segregation: A
+computational model applied to Baghdad. *International Studies Quarterly*,
+57(1), 52–64. https://doi.org/10.1111/isqu.12033
+*(Discusses satellite imagery and battlefield damage assessment as
+supplementary sources for explosion/remote violence events in contested areas.)*

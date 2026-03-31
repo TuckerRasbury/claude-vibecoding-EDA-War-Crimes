@@ -23,6 +23,9 @@ kaleido>=0.2.1          # static export for plotly
 geopandas>=0.14.0
 shapely>=2.0.0
 
+# Network analysis
+networkx>=3.2.0
+
 # Progress bars
 tqdm>=4.66.0
 
