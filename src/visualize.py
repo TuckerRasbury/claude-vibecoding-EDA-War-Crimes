@@ -840,6 +840,384 @@ def export_summary(df: pd.DataFrame) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Fatality analysis
+# ---------------------------------------------------------------------------
+
+def chart_fatality_analysis(df: pd.DataFrame) -> None:
+    """
+    2×2 subplot figure examining fatalities as a distinct dimension from event counts.
+
+    Event counts and fatality counts often tell different stories:
+    a small number of high-lethality events in one country can exceed the total
+    death toll of a country with ten times the event count. This chart surfaces
+    that distinction.
+
+    Panels:
+      1. Top 20 countries by total fatalities (vs. event count ranking)
+      2. Fatalities per event (lethality ratio) — top 20 countries
+      3. Annual fatalities by event type over time
+      4. Scatter: event count vs. fatalities by country (log scale)
+    """
+    if not _require(df):
+        return
+
+    df2 = df.copy()
+    df2["year"] = df2["year"].fillna(0).astype(int)
+
+    # ── Panel data ──────────────────────────────────────────────────────────
+    by_country = (
+        df2.groupby("country")
+        .agg(events=("event_type", "count"), fatalities=("fatalities", "sum"))
+        .reset_index()
+        .assign(fatalities_per_event=lambda x: (x["fatalities"] / x["events"]).round(2))
+    )
+    top_fatal = by_country.nlargest(20, "fatalities")
+    top_lethal = by_country[by_country["events"] >= 50].nlargest(20, "fatalities_per_event")
+
+    annual_type = (
+        df2.groupby(["year", "event_type"])["fatalities"]
+        .sum()
+        .reset_index()
+    )
+
+    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+    fig.suptitle("Fatality Analysis — ACLED\n(Event counts and death tolls tell different stories)",
+                 fontsize=14, y=1.01)
+
+    # Panel 1: top 20 by total fatalities
+    ax = axes[0, 0]
+    ax.barh(top_fatal["country"][::-1], top_fatal["fatalities"][::-1],
+            color="#c0392b", alpha=0.85)
+    ax.set_title("Top 20 Countries: Total Fatalities")
+    ax.set_xlabel("Fatalities")
+    ax.xaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{int(x):,}"))
+
+    # Panel 2: lethality ratio (min 50 events to filter noise)
+    ax = axes[0, 1]
+    ax.barh(top_lethal["country"][::-1], top_lethal["fatalities_per_event"][::-1],
+            color="#e67e22", alpha=0.85)
+    ax.set_title("Fatalities per Event (countries with ≥50 events)")
+    ax.set_xlabel("Avg. Fatalities per Event")
+
+    # Panel 3: annual fatalities by event type
+    ax = axes[1, 0]
+    for etype, color in PALETTE.items():
+        sub = annual_type[annual_type["event_type"] == etype]
+        ax.plot(sub["year"], sub["fatalities"], label=etype, color=color, linewidth=2, marker="o")
+    ax.set_title("Annual Fatalities by Event Type")
+    ax.set_xlabel("Year")
+    ax.set_ylabel("Fatalities")
+    ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{int(x):,}"))
+    ax.legend(fontsize=8)
+
+    # Panel 4: scatter event count vs. fatalities (log-log)
+    ax = axes[1, 1]
+    scatter_data = by_country[by_country["fatalities"] > 0]
+    ax.scatter(scatter_data["events"], scatter_data["fatalities"],
+               alpha=0.5, color="#8e44ad", edgecolors="white", linewidth=0.3, s=40)
+    # Label outliers (top 8 by fatalities)
+    for _, row in scatter_data.nlargest(8, "fatalities").iterrows():
+        ax.annotate(row["country"], (row["events"], row["fatalities"]),
+                    fontsize=7, ha="left", va="bottom",
+                    xytext=(4, 4), textcoords="offset points")
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.set_title("Event Count vs. Fatalities by Country (log scale)")
+    ax.set_xlabel("Events (log)")
+    ax.set_ylabel("Fatalities (log)")
+
+    plt.tight_layout()
+    out = OUT_DIR / "fatality_analysis.png"
+    fig.savefig(str(out), dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    log.info("Saved: %s", out)
+
+
+# ---------------------------------------------------------------------------
+# Reporting source analysis
+# ---------------------------------------------------------------------------
+
+def chart_source_analysis(df: pd.DataFrame) -> None:
+    """
+    Two outputs examining who is reporting the events ACLED codes.
+
+    ACLED's `source` field records the outlet or organization that reported each
+    event (e.g., "Reuters", "UN OCHA", "local NGO"). Analyzing this directly
+    grounds the completeness heatmap in the actual data: regions with low source
+    diversity or heavy reliance on a single outlet have structurally weaker coverage.
+
+    Methodology note: this analysis operationalizes the findings of Weidmann (2016)
+    and Davenport & Ball (2002) — source selection shapes what gets counted.
+
+    Outputs:
+      source_analysis.png  — top 25 sources + source-type breakdown by region
+      source_diversity.html — interactive: unique sources per region vs. event count
+    """
+    if not _require(df):
+        return
+
+    if "source" not in df.columns:
+        log.warning("'source' column not found. Skipping source analysis.")
+        return
+
+    import plotly.graph_objects as go
+
+    # ── Static PNG ─────────────────────────────────────────────────────────
+    top_sources = df["source"].value_counts().head(25)
+
+    # Classify source type from name heuristics
+    def _source_type(name: str) -> str:
+        name_l = str(name).lower()
+        if any(k in name_l for k in ("reuters", "ap ", "afp", "bbc", "al jazeera",
+                                      "associated press", "france 24")):
+            return "International Media"
+        if any(k in name_l for k in ("ocha", "unhcr", "unicef", "undp", "un ", "united nations")):
+            return "UN / IGO"
+        if any(k in name_l for k in ("hrw", "human rights", "amnesty", "oxfam",
+                                      "médecins", "msf", "icrc", "ngo")):
+            return "Human Rights / NGO"
+        if any(k in name_l for k in ("acled", "monitor", "observatory")):
+            return "Conflict Monitor"
+        if any(k in name_l for k in ("government", "ministry", "army", "military",
+                                      "police", "official")):
+            return "Government / Official"
+        return "Local / Other Media"
+
+    df2 = df.copy()
+    df2["source_type"] = df2["source"].apply(_source_type)
+
+    fig, axes = plt.subplots(1, 2, figsize=(16, 8))
+    fig.suptitle("Reporting Source Analysis (ACLED)\n"
+                 "Who reports the events that get coded?", fontsize=13)
+
+    # Panel 1: top 25 sources
+    axes[0].barh(top_sources.index[::-1], top_sources.values[::-1],
+                 color="#2471a3", alpha=0.85)
+    axes[0].set_title("Top 25 Reporting Sources by Event Count")
+    axes[0].set_xlabel("Events")
+    axes[0].xaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{int(x):,}"))
+
+    # Panel 2: source type breakdown global
+    type_counts = df2["source_type"].value_counts()
+    axes[1].pie(type_counts.values, labels=type_counts.index,
+                autopct="%1.1f%%",
+                colors=sns.color_palette("Set2", len(type_counts)),
+                startangle=90)
+    axes[1].set_title("Source Type Distribution (Global)")
+
+    plt.tight_layout()
+    out_png = OUT_DIR / "source_analysis.png"
+    fig.savefig(str(out_png), dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    log.info("Saved: %s", out_png)
+
+    # ── Interactive: source diversity by region ─────────────────────────────
+    if "region" not in df2.columns:
+        return
+
+    diversity = (
+        df2.groupby("region")
+        .agg(
+            events=("source", "count"),
+            unique_sources=("source", "nunique"),
+        )
+        .reset_index()
+        .assign(diversity_ratio=lambda x: (x["unique_sources"] / x["events"]).round(4))
+        .sort_values("diversity_ratio")
+    )
+
+    fig2 = go.Figure()
+    fig2.add_trace(go.Bar(
+        x=diversity["region"],
+        y=diversity["diversity_ratio"],
+        name="Source Diversity (unique sources / events)",
+        marker_color="#2471a3",
+        hovertemplate=(
+            "<b>%{x}</b><br>"
+            "Diversity ratio: %{y:.4f}<br>"
+            "Unique sources: %{customdata[0]}<br>"
+            "Events: %{customdata[1]}<extra></extra>"
+        ),
+        customdata=diversity[["unique_sources", "events"]].values,
+    ))
+    fig2.update_layout(
+        title=(
+            "Source Diversity by Region — ACLED<br>"
+            "<sub>Unique sources / event count. "
+            "Lower = higher single-source dependency = higher undercount risk. "
+            "Operationalises Weidmann (2016) and Davenport & Ball (2002).</sub>"
+        ),
+        xaxis_title="Region",
+        yaxis_title="Diversity Ratio",
+        xaxis_tickangle=-30,
+        template="plotly_white",
+        height=500,
+    )
+    out_html = OUT_DIR / "source_diversity.html"
+    fig2.write_html(str(out_html))
+    log.info("Saved: %s", out_html)
+
+
+# ---------------------------------------------------------------------------
+# Escalation phase detection
+# ---------------------------------------------------------------------------
+
+def chart_escalation_phases(df: pd.DataFrame, top_n_countries: int = 6) -> None:
+    """
+    Rolling 30-day event counts per country with escalation spike annotations.
+
+    War crimes data has a temporal structure: violations cluster in escalation
+    phases. Showing rolling averages alongside raw monthly counts reveals whether
+    a conflict is accelerating, stable, or de-escalating — context critical for
+    interpreting accountability gaps.
+
+    Also includes a sub_event_type breakdown to show *what kind* of tactics
+    dominate within each top-level event type.
+
+    Output: escalation_phases.html (Plotly — one trace per top country + global)
+            sub_event_breakdown.png (Matplotlib)
+    """
+    if not _require(df):
+        return
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+
+    df2 = df.dropna(subset=["event_date", "country"]).copy()
+    df2 = df2.sort_values("event_date")
+
+    # Global 30-day rolling
+    global_daily = (
+        df2.groupby("event_date")
+        .size()
+        .rename("events")
+        .resample("D")
+        .sum()
+        .fillna(0)
+    )
+    global_roll = global_daily.rolling(30, min_periods=1).mean()
+
+    # Top N countries by event count
+    top_countries = df2["country"].value_counts().head(top_n_countries).index.tolist()
+
+    # Detect top 5 global escalation spikes: largest 30-day increase
+    roll_diff = global_roll.diff(30).dropna()
+    top_spikes = roll_diff.nlargest(5)
+
+    fig = go.Figure()
+
+    # Global trace
+    fig.add_trace(go.Scatter(
+        x=global_roll.index,
+        y=global_roll.values,
+        name="Global (30d rolling avg)",
+        line=dict(color="#333333", width=2.5, dash="dot"),
+    ))
+
+    colors = ["#c0392b", "#e67e22", "#2471a3", "#27ae60", "#8e44ad", "#f39c12"]
+    for i, country in enumerate(top_countries):
+        country_daily = (
+            df2[df2["country"] == country]
+            .groupby("event_date")
+            .size()
+            .rename("events")
+            .resample("D")
+            .sum()
+            .fillna(0)
+        )
+        country_roll = country_daily.rolling(30, min_periods=1).mean()
+        fig.add_trace(go.Scatter(
+            x=country_roll.index,
+            y=country_roll.values,
+            name=country,
+            line=dict(color=colors[i % len(colors)], width=1.5),
+            opacity=0.8,
+        ))
+
+    # Annotate global spikes
+    for spike_date, _ in top_spikes.items():
+        # Find which country was driving the spike
+        window = df2[
+            (df2["event_date"] >= spike_date - pd.Timedelta(days=30)) &
+            (df2["event_date"] <= spike_date)
+        ]
+        top_country_spike = (
+            window["country"].value_counts().index[0]
+            if not window.empty else "Unknown"
+        )
+        # add_vline with datetime x is broken in several plotly versions;
+        # use add_shape + add_annotation as a reliable alternative.
+        x_iso = spike_date.isoformat()
+        fig.add_shape(
+            type="line",
+            x0=x_iso, x1=x_iso,
+            y0=0, y1=1,
+            yref="paper",
+            line=dict(color="red", width=1, dash="dash"),
+            opacity=0.5,
+        )
+        fig.add_annotation(
+            x=x_iso,
+            y=0.96,
+            yref="paper",
+            text=f"Spike: {top_country_spike}",
+            showarrow=False,
+            font=dict(size=10, color="red"),
+            opacity=0.8,
+        )
+
+    fig.update_layout(
+        title=(
+            f"Conflict Escalation Phases — 30-Day Rolling Event Count<br>"
+            f"<sub>Top {top_n_countries} countries + global. "
+            f"Red dashed lines mark the 5 largest 30-day escalation spikes globally.</sub>"
+        ),
+        xaxis_title="Date",
+        yaxis_title="Events (30-day rolling avg)",
+        template="plotly_white",
+        hovermode="x unified",
+        legend_title="Country / Series",
+        height=550,
+    )
+    out_html = OUT_DIR / "escalation_phases.html"
+    fig.write_html(str(out_html))
+    log.info("Saved: %s", out_html)
+
+    # ── Sub-event type breakdown ─────────────────────────────────────────────
+    if "sub_event_type" not in df2.columns:
+        return
+
+    sub_counts = (
+        df2.groupby(["event_type", "sub_event_type"])
+        .size()
+        .reset_index(name="count")
+        .sort_values(["event_type", "count"], ascending=[True, False])
+    )
+
+    event_types = sub_counts["event_type"].unique()
+    fig2, axes = plt.subplots(
+        1, len(event_types), figsize=(5 * len(event_types), 6), sharey=False
+    )
+    if len(event_types) == 1:
+        axes = [axes]
+    fig2.suptitle("Sub-Event Type Breakdown by Top-Level Category (ACLED)", fontsize=13)
+
+    colors_map = list(PALETTE.values())
+    for ax, etype, color in zip(axes, sorted(event_types), colors_map):
+        sub = sub_counts[sub_counts["event_type"] == etype].head(8)
+        ax.barh(sub["sub_event_type"][::-1], sub["count"][::-1],
+                color=color, alpha=0.85)
+        ax.set_title(etype, fontsize=10)
+        ax.set_xlabel("Events")
+        ax.xaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{int(x):,}"))
+
+    plt.tight_layout()
+    out_png = OUT_DIR / "sub_event_breakdown.png"
+    fig2.savefig(str(out_png), dpi=150, bbox_inches="tight")
+    plt.close(fig2)
+    log.info("Saved: %s", out_png)
+
+
+# ---------------------------------------------------------------------------
 # Chart registry
 # ---------------------------------------------------------------------------
 
@@ -855,6 +1233,9 @@ CHART_REGISTRY = {
     "actor_network": chart_actor_network,
     "accountability_gap": chart_accountability_gap,
     "data_completeness": chart_data_completeness,
+    "fatality_analysis": chart_fatality_analysis,
+    "source_analysis": chart_source_analysis,
+    "escalation_phases": chart_escalation_phases,
     "summary": export_summary,
 }
 

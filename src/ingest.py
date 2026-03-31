@@ -309,6 +309,81 @@ def ingest_hrdag_guatemala() -> pd.DataFrame:
         return pd.DataFrame()
 
 
+# ---------------------------------------------------------------------------
+# UNHCR ingestion
+# ---------------------------------------------------------------------------
+
+def ingest_unhcr() -> pd.DataFrame:
+    """
+    Download UNHCR annual displacement data (refugees + IDPs) — no API key required.
+
+    UNHCR publishes population statistics as a public CSV. We pull the full
+    dataset and filter to refugees and internally displaced persons (IDPs),
+    which are the displacement categories most directly linked to armed conflict
+    and war-crimes-adjacent violence.
+
+    Returns a DataFrame and saves to data/raw/unhcr_displacement.csv.
+
+    If the download fails, prints manual download instructions.
+    """
+    # UNHCR API v1 — public, no key required
+    # Returns annual population figures by origin country, asylum country, and
+    # population type (REF=refugees, IDP=internally displaced, etc.)
+    UNHCR_URL = (
+        "https://api.unhcr.org/population/v1/population/"
+        "?limit=10000&dataset=population&displayType=totals"
+        "&columns[]=refugees&columns[]=idps&columns[]=year"
+        "&columns[]=iso3&columns[]=coa_iso3"
+        "&yearFrom=2019&yearTo=2024"
+    )
+
+    dest = RAW_DIR / "unhcr_displacement.csv"
+    log.info("Downloading UNHCR displacement data...")
+
+    try:
+        resp = requests.get(UNHCR_URL, timeout=60, headers={"Accept": "application/json"})
+        resp.raise_for_status()
+        payload = resp.json()
+
+        # UNHCR API wraps results in {"items": [...]}
+        items = payload.get("items", payload.get("data", []))
+        if not items:
+            raise ValueError("Empty response from UNHCR API")
+
+        df = pd.DataFrame(items)
+        df.columns = [c.strip().lower() for c in df.columns]
+
+        # Normalize column names — API returns vary slightly by version
+        rename_map = {
+            "refugees_under_unhcrs_mandate": "refugees",
+            "asylum-seekers": "asylum_seekers",
+            "internally_displaced_persons__idps_": "idps",
+            "coo": "iso3_origin",
+            "coa": "iso3_asylum",
+        }
+        df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
+
+        for col in ("refugees", "idps", "year"):
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+
+        df.to_csv(dest, index=False)
+        log.info("Saved UNHCR displacement: %d rows to %s", len(df), dest)
+        return df
+
+    except Exception as exc:
+        log.warning("UNHCR API download failed: %s", exc)
+        log.warning(
+            "\n"
+            "  UNHCR download failed.\n"
+            "  Manual steps:\n"
+            "    1. Visit: https://www.unhcr.org/refugee-statistics/download/\n"
+            "    2. Select: Population statistics → Refugees + IDPs, 2019–2024\n"
+            "    3. Export as CSV and save to: data/raw/unhcr_displacement.csv\n"
+        )
+        return pd.DataFrame()
+
+
 def _hrdag_fallback_instructions(dataset: str) -> None:
     """Print human-readable instructions for manual HRDAG download."""
     instructions = {
@@ -344,7 +419,7 @@ def main():
     )
     parser.add_argument(
         "--source",
-        choices=["acled", "hrdag", "all"],
+        choices=["acled", "hrdag", "unhcr", "all"],
         default="all",
         help="Which data source to pull (default: all)",
     )
@@ -363,6 +438,11 @@ def main():
         df_guat = ingest_hrdag_guatemala()
         log.info("HRDAG Colombia: %d rows", len(df_col))
         log.info("HRDAG Guatemala: %d rows", len(df_guat))
+
+    if args.source in ("unhcr", "all"):
+        log.info("=== UNHCR ingestion ===")
+        df_unhcr = ingest_unhcr()
+        log.info("UNHCR: %d rows", len(df_unhcr))
 
     log.info("Done. Raw files are in data/raw/")
 

@@ -322,22 +322,145 @@ documented*, not *what occurred*.
 
 ## Visualizations
 
-All outputs are saved to `/outputs`. Run `python src/visualize.py` to regenerate.
+> Previews below are generated from **synthetic data** via `src/generate_samples.py`
+> and committed to the repo so visitors can see the charts without running the pipeline.
+> Run `python src/ingest.py` → `python src/visualize.py` to generate interactive
+> Plotly/Folium versions from real ACLED data (saved to `/outputs`).
 
-| File | Description |
-|------|-------------|
-| `choropleth_world.html` | Interactive choropleth of total events by country |
-| `event_cluster_map.html` | Dot map of individual events (date, actor, type) |
-| `heatmap_density.html` | Geographic event density heatmap |
-| `monthly_events_by_type.html` | Line chart: monthly counts by event type |
-| `animated_timeseries.html` | Animated map: conflict hotspots by year |
-| `yoy_violence_civilians.png` | Bar chart: year-over-year change in civilian violence |
-| `top20_actors.png` | Horizontal bar: top 20 actors by event count |
-| `actor_type_by_region.html` | Stacked bar: actor types broken out by region |
-| `actor_network.html` | Network diagram: who fights whom |
-| `accountability_gap.html` | ACLED counts vs. ICC cases by country |
-| `data_completeness.png` | Heatmap of source confidence/completeness by region |
-| `summary_aggregated.csv` | Aggregated findings export |
+---
+
+### Geographic
+
+<table>
+<tr>
+<td width="50%">
+<img src="assets/images/choropleth_world.png" alt="Events by country"/>
+<br><sub><b>Events by Country</b> — choropleth world map. Interactive Plotly version on pipeline run.</sub>
+</td>
+<td width="50%">
+<img src="assets/images/event_cluster_map.png" alt="Event locations dot map"/>
+<br><sub><b>Event Locations</b> — each point is one event, coloured by type. Interactive Folium cluster map with actor + date tooltips on pipeline run.</sub>
+</td>
+</tr>
+</table>
+
+![Event density heatmap](assets/images/heatmap_density.png)
+<sub><b>Event Density Heatmap</b> — hexbin density across all coordinates. Interactive Folium heatmap on pipeline run.</sub>
+
+---
+
+### Temporal
+
+![Monthly events by type](assets/images/monthly_events_by_type.png)
+<sub><b>Monthly Events by Type</b> — full date range, broken out by event type. Interactive Plotly line chart on pipeline run.</sub>
+
+<table>
+<tr>
+<td width="50%">
+<img src="assets/images/animated_timeseries.png" alt="Conflict hotspots by year"/>
+<br><sub><b>Hotspot Shift by Year</b> — most-recent-year frame shown. Full animated Plotly choropleth on pipeline run.</sub>
+</td>
+<td width="50%">
+<img src="assets/images/yoy_violence_civilians.png" alt="Year-over-year civilian violence"/>
+<br><sub><b>Year-over-Year Change</b> — violence against civilians specifically. Red = increase, green = decrease.</sub>
+</td>
+</tr>
+</table>
+
+---
+
+### Actor Analysis
+
+<table>
+<tr>
+<td width="50%">
+<img src="assets/images/top20_actors.png" alt="Top 20 actors"/>
+<br><sub><b>Top 20 Named Actors</b> — horizontal bar by total event count.</sub>
+</td>
+<td width="50%">
+<img src="assets/images/actor_type_by_region.png" alt="Actor type by region"/>
+<br><sub><b>Actor Type by Region</b> — stacked bar breaking down state vs. non-state actors. Interactive Plotly version on pipeline run.</sub>
+</td>
+</tr>
+</table>
+
+![Actor interaction network](assets/images/actor_network.png)
+<sub><b>Actor Interaction Network</b> — force-directed layout (Fruchterman-Reingold). Node size = event count. Color = actor type (red = state, green = rebel, orange = militia). Edge weight = interaction frequency. Interactive Plotly version on pipeline run.</sub>
+
+---
+
+### Accountability Gap & Data Quality
+
+<table>
+<tr>
+<td width="50%">
+<img src="assets/images/accountability_gap.png" alt="Accountability gap"/>
+<br><sub><b>Accountability Gap</b> — top countries by ACLED event count, coloured by ICC situation status. Red = high events, no ICC situation open.</sub>
+</td>
+<td width="50%">
+<img src="assets/images/data_completeness.png" alt="Data completeness heatmap"/>
+<br><sub><b>Data Completeness</b> — composite proxy by region and event type. Derived from RSF Press Freedom Index (2023), ACLED source tier, and Eck (2012) inter-source divergence.</sub>
+</td>
+</tr>
+</table>
+
+---
+
+### Fatality & Escalation Analysis
+
+![Fatality analysis](assets/images/fatality_analysis.png)
+<sub><b>Fatality Analysis</b> — event counts and death tolls tell different stories. Top-left: countries by total deaths. Top-right: lethality ratio (deaths per event). Bottom-left: annual deaths by type. Bottom-right: event count vs. fatalities scatter (log scale).</sub>
+
+<table>
+<tr>
+<td width="50%">
+<img src="assets/images/escalation_phases.png" alt="Escalation phases"/>
+<br><sub><b>Escalation Phases</b> — 30-day rolling event count for top countries and globally. Interactive Plotly version with spike annotations on pipeline run.</sub>
+</td>
+<td width="50%">
+<img src="assets/images/sub_event_breakdown.png" alt="Sub-event type breakdown"/>
+<br><sub><b>Sub-Event Breakdown</b> — tactics within each top-level event type (e.g. air strikes vs. IEDs within Explosions/Remote violence).</sub>
+</td>
+</tr>
+</table>
+
+---
+
+### Source & Reporting Transparency
+
+<table>
+<tr>
+<td width="50%">
+<img src="assets/images/source_analysis.png" alt="Reporting sources"/>
+<br><sub><b>Reporting Sources</b> — top 25 sources by event count (left) and source type distribution globally (right).</sub>
+</td>
+<td width="50%">
+<img src="assets/images/source_diversity.png" alt="Source diversity by region"/>
+<br><sub><b>Source Diversity by Region</b> — unique sources per event count. Lower ratio = higher single-source dependency = higher undercount risk (Weidmann, 2016).</sub>
+</td>
+</tr>
+</table>
+
+---
+
+<details>
+<summary><b>Interactive output files (generated on pipeline run)</b></summary>
+
+| File | Type |
+|------|------|
+| `outputs/choropleth_world.html` | Plotly interactive choropleth |
+| `outputs/event_cluster_map.html` | Folium cluster map with tooltips |
+| `outputs/heatmap_density.html` | Folium heatmap layer |
+| `outputs/monthly_events_by_type.html` | Plotly line chart |
+| `outputs/animated_timeseries.html` | Plotly animated choropleth |
+| `outputs/actor_type_by_region.html` | Plotly stacked bar |
+| `outputs/actor_network.html` | Plotly force-directed network |
+| `outputs/accountability_gap.html` | Plotly grouped bar |
+| `outputs/source_diversity.html` | Plotly bar |
+| `outputs/escalation_phases.html` | Plotly rolling-avg line with spike annotations |
+| `outputs/summary_aggregated.csv` | Aggregated findings export |
+
+</details>
 
 ---
 
