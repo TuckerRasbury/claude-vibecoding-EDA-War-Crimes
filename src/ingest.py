@@ -2,18 +2,21 @@
 src/ingest.py
 =============
 Downloads and stores raw data from:
-  1. ACLED API  — armed conflict events (requires free API key)
+  1. ACLED API  — armed conflict events (requires free myACLED account)
   2. HRDAG      — statistical datasets on documented killings (public downloads)
+  3. UNHCR      — annual displacement/refugee data (public API)
 
 Usage:
     python src/ingest.py               # pull everything
     python src/ingest.py --source acled
     python src/ingest.py --source hrdag
+    python src/ingest.py --source unhcr
 
 Outputs:
     data/raw/acled_raw.csv             — ACLED event records
     data/raw/hrdag_colombia.csv        — HRDAG Colombia dataset
     data/raw/hrdag_guatemala.csv       — HRDAG Guatemala dataset
+    data/raw/unhcr_displacement.csv    — UNHCR displacement data
 """
 
 import argparse
@@ -49,7 +52,10 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-ACLED_BASE_URL = "https://api.acleddata.com/acled/read"
+
+# ACLED moved to a new endpoint and OAuth auth in 2025
+ACLED_BASE_URL  = "https://acleddata.com/api/acled/read"
+ACLED_TOKEN_URL = "https://acleddata.com/oauth/token"
 
 # Event types most associated with war crimes / IHL violations
 ACLED_EVENT_TYPES = [
@@ -63,61 +69,147 @@ ACLED_EVENT_TYPES = [
 ACLED_YEARS_BACK = 5
 
 # HRDAG public dataset URLs
-# These are direct links to CSV files hosted on HRDAG's GitHub/public repo.
-# If a URL changes, set HRDAG_LOCAL_PATH in .env to point to a local file instead.
 HRDAG_SOURCES = {
     "colombia": (
         "https://raw.githubusercontent.com/HRDAG/CO-decesos/main/export/co-decesos.csv",
         RAW_DIR / "hrdag_colombia.csv",
     ),
     "guatemala": (
-        # HRDAG Guatemala truth commission data (REMHI / CEH era estimates)
-        # Fallback: HRDAG's public data page at https://hrdag.org/guatemala-data/
         "https://hrdag.org/wp-content/uploads/2012/01/HRDAG-Guatemala-Data.zip",
         RAW_DIR / "hrdag_guatemala.zip",
     ),
 }
 
 # ---------------------------------------------------------------------------
-# Helpers
+# ACLED OAuth helpers
 # ---------------------------------------------------------------------------
 
 def _check_acled_credentials() -> tuple[str, str]:
-    """Load and validate ACLED credentials from .env. Exit with message if missing."""
+    """
+    Load ACLED credentials from .env. Exit with clear instructions if missing.
+
+    ACLED switched from API keys to OAuth in 2025. New accounts authenticate
+    with their myACLED email and password — no separate API key exists.
+    """
     load_dotenv()
-    email = os.getenv("ACLED_EMAIL", "").strip()
-    key = os.getenv("ACLED_API_KEY", "").strip()
-    if not email or not key:
+    email    = os.getenv("ACLED_EMAIL",    "").strip()
+    password = os.getenv("ACLED_PASSWORD", "").strip()
+    if not email or not password:
         log.error(
             "\n"
             "  ACLED credentials not found.\n"
-            "  1. Register for a free API key at: https://acleddata.com/register/\n"
-            "  2. Copy .env.example -> .env\n"
-            "  3. Fill in ACLED_EMAIL and ACLED_API_KEY\n"
+            "  ACLED now uses email + password (OAuth) — no API key needed.\n"
+            "  1. Register / log in at: https://acleddata.com/register/\n"
+            "  2. Copy .env.example -> .env in the project root\n"
+            "  3. Fill in ACLED_EMAIL and ACLED_PASSWORD\n"
+            "     (same email + password you use to log in to acleddata.com)\n"
         )
         sys.exit(1)
-    return email, key
+    return email, password
 
 
-def _acled_request(params: dict, session: requests.Session) -> list[dict]:
-    """Single paginated ACLED API request with basic retry logic."""
+def _get_acled_token(email: str, password: str) -> tuple[str, str]:
+    """
+    Obtain an ACLED OAuth access token via the password grant flow.
+
+    Returns (access_token, refresh_token).
+    Access token is valid for 24 hours; refresh token for 14 days.
+    """
+    log.info("Authenticating with ACLED (OAuth)...")
+    resp = requests.post(
+        ACLED_TOKEN_URL,
+        data={
+            "username":   email,
+            "password":   password,
+            "grant_type": "password",
+            "client_id":  "acled",
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        timeout=30,
+    )
+    if resp.status_code != 200:
+        log.error(
+            "ACLED authentication failed (HTTP %d): %s\n"
+            "Check your ACLED_EMAIL and ACLED_PASSWORD in .env.",
+            resp.status_code, resp.text[:300],
+        )
+        sys.exit(1)
+
+    tokens = resp.json()
+    access  = tokens.get("access_token", "")
+    refresh = tokens.get("refresh_token", "")
+    if not access:
+        log.error("ACLED token response missing access_token: %s", tokens)
+        sys.exit(1)
+
+    log.info("ACLED authentication successful.")
+    return access, refresh
+
+
+def _refresh_acled_token(refresh_token: str) -> tuple[str, str]:
+    """Exchange a refresh token for a new access token."""
+    resp = requests.post(
+        ACLED_TOKEN_URL,
+        data={
+            "refresh_token": refresh_token,
+            "grant_type":    "refresh_token",
+            "client_id":     "acled",
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        timeout=30,
+    )
+    if resp.status_code != 200:
+        log.error("Token refresh failed (HTTP %d). Re-authenticating...", resp.status_code)
+        raise ValueError("refresh_failed")
+    tokens = resp.json()
+    return tokens["access_token"], tokens["refresh_token"]
+
+
+def _acled_request(
+    params: dict,
+    session: requests.Session,
+    refresh_token: str,
+) -> tuple[list[dict], str]:
+    """
+    Single paginated ACLED API request with retry + automatic token refresh.
+
+    Returns (records, refresh_token) — refresh_token may be updated if a
+    401 triggered a refresh mid-run.
+    """
     max_retries = 3
     for attempt in range(max_retries):
         try:
             resp = session.get(ACLED_BASE_URL, params=params, timeout=60)
+
+            # Token expired — refresh and retry once
+            if resp.status_code == 401:
+                log.info("Access token expired; refreshing...")
+                try:
+                    new_access, refresh_token = _refresh_acled_token(refresh_token)
+                except ValueError:
+                    # Refresh also failed — bail out
+                    log.error("Could not refresh ACLED token. Re-run the script.")
+                    return [], refresh_token
+                session.headers.update({"Authorization": f"Bearer {new_access}"})
+                resp = session.get(ACLED_BASE_URL, params=params, timeout=60)
+
             resp.raise_for_status()
             data = resp.json()
             if data.get("success") is False:
                 log.error("ACLED API error: %s", data.get("error", "unknown"))
-                return []
-            return data.get("data", [])
+                return [], refresh_token
+            return data.get("data", []), refresh_token
+
         except requests.RequestException as exc:
             wait = 2 ** attempt
-            log.warning("Request failed (attempt %d/%d): %s — retrying in %ds",
-                        attempt + 1, max_retries, exc, wait)
+            log.warning(
+                "Request failed (attempt %d/%d): %s — retrying in %ds",
+                attempt + 1, max_retries, exc, wait,
+            )
             time.sleep(wait)
+
     log.error("All retries exhausted for ACLED request.")
-    return []
+    return [], refresh_token
 
 
 # ---------------------------------------------------------------------------
@@ -131,21 +223,24 @@ def ingest_acled() -> pd.DataFrame:
 
     Returns a DataFrame and saves to data/raw/acled_raw.csv.
     """
-    email, key = _check_acled_credentials()
+    email, password = _check_acled_credentials()
+    access_token, refresh_token = _get_acled_token(email, password)
 
     start_date = (datetime.utcnow() - timedelta(days=365 * ACLED_YEARS_BACK)).strftime("%Y-%m-%d")
-    end_date = datetime.utcnow().strftime("%Y-%m-%d")
+    end_date   = datetime.utcnow().strftime("%Y-%m-%d")
 
     log.info("Pulling ACLED data from %s to %s", start_date, end_date)
     log.info("Event types: %s", ACLED_EVENT_TYPES)
 
     session = requests.Session()
-    session.headers.update({"Accept": "application/json"})
+    session.headers.update({
+        "Accept":        "application/json",
+        "Authorization": f"Bearer {access_token}",
+    })
 
     all_records: list[dict] = []
     page_size = 5000
 
-    # Pull each event type separately to keep per-type logging clear
     for event_type in ACLED_EVENT_TYPES:
         log.info("  Fetching: %s", event_type)
         page = 1
@@ -153,10 +248,8 @@ def ingest_acled() -> pd.DataFrame:
 
         while True:
             params = {
-                "email": email,
-                "key": key,
-                "event_type": event_type,
-                "event_date": f"{start_date}|{end_date}",
+                "event_type":       event_type,
+                "event_date":       f"{start_date}|{end_date}",
                 "event_date_where": "BETWEEN",
                 "fields": (
                     "event_id_cnty|event_date|year|time_precision|event_type|"
@@ -165,10 +258,10 @@ def ingest_acled() -> pd.DataFrame:
                     "latitude|longitude|geo_precision|source|notes|fatalities"
                 ),
                 "limit": page_size,
-                "page": page,
+                "page":  page,
             }
 
-            records = _acled_request(params, session)
+            records, refresh_token = _acled_request(params, session, refresh_token)
             if not records:
                 break
 
@@ -176,7 +269,6 @@ def ingest_acled() -> pd.DataFrame:
             type_count += len(records)
 
             if len(records) < page_size:
-                # Last page
                 break
             page += 1
 
@@ -189,11 +281,11 @@ def ingest_acled() -> pd.DataFrame:
     df = pd.DataFrame(all_records)
 
     # Type coercion
-    df["event_date"] = pd.to_datetime(df["event_date"], errors="coerce")
-    df["year"] = pd.to_numeric(df["year"], errors="coerce")
-    df["latitude"] = pd.to_numeric(df["latitude"], errors="coerce")
-    df["longitude"] = pd.to_numeric(df["longitude"], errors="coerce")
-    df["fatalities"] = pd.to_numeric(df["fatalities"], errors="coerce").fillna(0).astype(int)
+    df["event_date"]  = pd.to_datetime(df["event_date"], errors="coerce")
+    df["year"]        = pd.to_numeric(df["year"],        errors="coerce")
+    df["latitude"]    = pd.to_numeric(df["latitude"],    errors="coerce")
+    df["longitude"]   = pd.to_numeric(df["longitude"],  errors="coerce")
+    df["fatalities"]  = pd.to_numeric(df["fatalities"], errors="coerce").fillna(0).astype(int)
 
     out_path = RAW_DIR / "acled_raw.csv"
     df.to_csv(out_path, index=False)

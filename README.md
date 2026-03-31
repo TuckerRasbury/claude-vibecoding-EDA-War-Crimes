@@ -41,7 +41,7 @@ understanding.
 ### 1. Prerequisites
 
 - Python 3.10+
-- A free ACLED API key ([register here](https://acleddata.com/register/))
+- A free ACLED account ([register here](https://acleddata.com/register/)) — uses email + password (OAuth 2.0; API keys deprecated September 2025)
 
 ### 2. Clone and install
 
@@ -58,7 +58,7 @@ pip install -r requirements.txt
 
 ```bash
 cp .env.example .env
-# Open .env and add your ACLED_EMAIL and ACLED_API_KEY
+# Open .env and fill in your ACLED_EMAIL and ACLED_PASSWORD
 ```
 
 ### 4. Ingest data
@@ -68,8 +68,9 @@ cp .env.example .env
 python src/ingest.py
 ```
 
-> **NOTE — ACLED API key required.** Register for free at acleddata.com. The script
-> will fail gracefully and print instructions if credentials are missing.
+> **NOTE — ACLED credentials required.** Register for free at acleddata.com. Use your
+> myACLED email + password (OAuth 2.0 — API keys were deprecated in September 2025).
+> The script will fail gracefully and print instructions if credentials are missing.
 >
 > **NOTE — HRDAG data.** HRDAG's Colombia and Guatemala datasets are downloaded
 > directly from public GitHub/web URLs embedded in the script. If those URLs change,
