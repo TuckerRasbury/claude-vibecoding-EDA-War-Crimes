@@ -1,7 +1,7 @@
 """
 src/visualize.py
 ================
-Generates all charts and maps from processed ACLED data and HRDAG datasets.
+Generates all charts and maps from UCDP GED and HRDAG datasets.
 All outputs are saved to /outputs.
 
 Usage:
@@ -9,7 +9,7 @@ Usage:
     python src/visualize.py --chart choropleth
     python src/visualize.py --chart all
 
-Requires data/raw/acled_raw.csv to exist (run src/ingest.py first).
+Requires data/raw/ucdp_ged.csv to exist (run src/ingest.py first).
 
 Output files:
     outputs/choropleth_world.html         geographic: events by country
@@ -17,11 +17,11 @@ Output files:
     outputs/heatmap_density.html          geographic: density heatmap
     outputs/monthly_events_by_type.html   temporal: line chart
     outputs/animated_timeseries.html      temporal: animated year map
-    outputs/yoy_violence_civilians.png    temporal: YoY bar chart
+    outputs/yoy_violence_civilians.png    temporal: YoY change in one-sided violence
     outputs/top20_actors.png              actor: horizontal bar
-    outputs/actor_type_by_region.html     actor: stacked bar by region
+    outputs/actor_type_by_region.html     actor: violence type by country
     outputs/actor_network.html            actor: network diagram
-    outputs/accountability_gap.html       accountability: ACLED vs ICC
+    outputs/accountability_gap.html       accountability: UCDP events vs ICC
     outputs/data_completeness.png         accountability: completeness heatmap
     outputs/summary_aggregated.csv        aggregated findings export
 """
@@ -60,10 +60,9 @@ PROC_DIR.mkdir(parents=True, exist_ok=True)
 # Branding / style constants
 # ---------------------------------------------------------------------------
 PALETTE = {
-    "Battles": "#c0392b",
-    "Explosions/Remote violence": "#e67e22",
-    "Violence against civilians": "#8e44ad",
-    "Sexual violence": "#2471a3",
+    "State-based conflict":  "#c0392b",
+    "Non-state conflict":    "#e67e22",
+    "One-sided violence":    "#8e44ad",
 }
 REGION_COLORS = sns.color_palette("tab10", 12)
 sns.set_theme(style="whitegrid", font_scale=1.1)
@@ -81,23 +80,26 @@ ICC_SITUATION_COUNTRIES = {
 # Data loading
 # ---------------------------------------------------------------------------
 
-def load_acled(path: Path | None = None) -> pd.DataFrame:
-    """Load ACLED raw CSV with type casting. Returns empty DataFrame if missing."""
-    path = path or RAW_DIR / "acled_raw.csv"
+def load_ucdp(path: Path | None = None) -> pd.DataFrame:
+    """Load UCDP GED CSV with type casting. Returns empty DataFrame if missing."""
+    path = path or RAW_DIR / "ucdp_ged.csv"
     if not path.exists():
         log.warning(
-            "ACLED data not found at %s. Run `python src/ingest.py` first.", path
+            "UCDP GED data not found at %s. Run `python src/ingest.py` first.", path
         )
         return pd.DataFrame()
 
     df = pd.read_csv(path, low_memory=False)
-    df["event_date"] = pd.to_datetime(df["event_date"], errors="coerce")
-    df["year"] = pd.to_numeric(df.get("year", pd.Series()), errors="coerce")
-    df["latitude"] = pd.to_numeric(df.get("latitude", pd.Series()), errors="coerce")
-    df["longitude"] = pd.to_numeric(df.get("longitude", pd.Series()), errors="coerce")
-    df["fatalities"] = pd.to_numeric(df.get("fatalities", pd.Series()), errors="coerce").fillna(0).astype(int)
+    df["event_date"] = pd.to_datetime(df.get("event_date"), errors="coerce")
+    df["year"] = pd.to_numeric(df.get("year", pd.Series(dtype=float)), errors="coerce")
+    df["latitude"] = pd.to_numeric(df.get("latitude", pd.Series(dtype=float)), errors="coerce")
+    df["longitude"] = pd.to_numeric(df.get("longitude", pd.Series(dtype=float)), errors="coerce")
+    df["fatalities"] = pd.to_numeric(df.get("fatalities", pd.Series(dtype=float)), errors="coerce").fillna(0).astype(int)
     df["year_month"] = df["event_date"].dt.to_period("M")
-    log.info("Loaded ACLED: %d rows", len(df))
+    log.info("Loaded UCDP GED: %d rows", len(df))
+
+# Alias for backwards compatibility with notebook cells
+load_acled = load_ucdp
     return df
 
 
@@ -126,7 +128,7 @@ def chart_choropleth_world(df: pd.DataFrame) -> None:
         locationmode="country names",
         color="event_count",
         color_continuous_scale="OrRd",
-        title="Total War-Crimes-Related Events by Country (ACLED)",
+        title="Total Conflict Events by Country (UCDP GED 1989–2024)",
         labels={"event_count": "Events"},
     )
     fig.update_layout(
@@ -157,10 +159,9 @@ def chart_event_cluster_map(df: pd.DataFrame, max_points: int = 20_000) -> None:
     cluster = MarkerCluster(name="Events").add_to(m)
 
     event_color_map = {
-        "Battles": "red",
-        "Explosions/Remote violence": "orange",
-        "Violence against civilians": "purple",
-        "Sexual violence": "blue",
+        "State-based conflict": "red",
+        "Non-state conflict":   "orange",
+        "One-sided violence":   "purple",
     }
 
     for _, row in sample.iterrows():
@@ -255,7 +256,7 @@ def chart_monthly_events_by_type(df: pd.DataFrame) -> None:
         ))
 
     fig.update_layout(
-        title="Monthly War-Crimes-Related Events by Type (ACLED)",
+        title="Monthly Conflict Events by Type (UCDP GED)",
         xaxis_title="Month",
         yaxis_title="Events",
         legend_title="Event Type",
@@ -303,13 +304,15 @@ def chart_animated_timeseries(df: pd.DataFrame) -> None:
 
 
 def chart_yoy_violence_civilians(df: pd.DataFrame) -> None:
-    """Static Matplotlib bar chart: year-over-year change in 'Violence against civilians'."""
+    """Static Matplotlib bar chart: year-over-year change in one-sided violence events."""
     if not _require(df):
         return
 
-    vac = df[df["event_type"] == "Violence against civilians"].copy()
+    # UCDP: "One-sided violence" = organised violence against unarmed civilians
+    target = "One-sided violence"
+    vac = df[df["event_type"] == target].copy()
     if vac.empty:
-        log.warning("No 'Violence against civilians' events found.")
+        log.warning("No '%s' events found.", target)
         return
 
     annual = vac.groupby("year").size().rename("events")
@@ -320,7 +323,7 @@ def chart_yoy_violence_civilians(df: pd.DataFrame) -> None:
     colors = ["#c0392b" if v >= 0 else "#27ae60" for v in yoy.values]
     ax.bar(yoy.index.astype(int), yoy.values, color=colors, edgecolor="white")
     ax.axhline(0, color="black", linewidth=0.8)
-    ax.set_title("Year-over-Year Change: Violence Against Civilians (ACLED)", fontsize=14)
+    ax.set_title("Year-over-Year Change: One-Sided Violence Against Civilians (UCDP GED)", fontsize=14)
     ax.set_xlabel("Year")
     ax.set_ylabel("Change in Event Count")
     ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{int(x):+,}"))
@@ -387,44 +390,50 @@ def _classify_actor_type(inter_code) -> str:
 
 
 def chart_actor_type_by_region(df: pd.DataFrame) -> None:
-    """Interactive Plotly stacked bar: actor type distribution by region."""
+    """
+    Interactive Plotly stacked bar: violence type distribution across top countries.
+
+    UCDP GED uses three mutually exclusive violence categories (type_of_violence):
+      1 = State-based conflict, 2 = Non-state conflict, 3 = One-sided violence.
+    Since UCDP does not include ACLED-style sub-national region labels, we use
+    country as the geographic grouping and show the top 20 countries by total events.
+    """
     if not _require(df):
         return
     import plotly.graph_objects as go
 
-    if "inter1" not in df.columns or "region" not in df.columns:
-        log.warning("Required columns 'inter1' or 'region' not found. Skipping.")
+    if "event_type" not in df.columns or "country" not in df.columns:
+        log.warning("Required columns 'event_type' or 'country' not found. Skipping.")
         return
 
-    df2 = df.dropna(subset=["inter1", "region"]).copy()
-    df2["actor_type"] = df2["inter1"].apply(_classify_actor_type)
+    top_countries = df["country"].value_counts().head(20).index
+    df2 = df[df["country"].isin(top_countries)].dropna(subset=["event_type", "country"]).copy()
 
     pivot = (
-        df2.groupby(["region", "actor_type"])
+        df2.groupby(["country", "event_type"])
         .size()
         .unstack(fill_value=0)
     )
+    # Sort countries by total events
+    pivot = pivot.loc[pivot.sum(axis=1).sort_values(ascending=False).index]
 
     fig = go.Figure()
-    color_seq = [
-        "#c0392b", "#e67e22", "#f1c40f", "#2ecc71",
-        "#3498db", "#9b59b6", "#1abc9c", "#e74c3c",
-    ]
-    for i, atype in enumerate(pivot.columns):
+    color_seq = list(PALETTE.values()) + ["#3498db", "#9b59b6", "#1abc9c"]
+    for i, vtype in enumerate(pivot.columns):
         fig.add_trace(go.Bar(
-            name=atype,
+            name=vtype,
             x=pivot.index,
-            y=pivot[atype],
+            y=pivot[vtype],
             marker_color=color_seq[i % len(color_seq)],
         ))
 
     fig.update_layout(
         barmode="stack",
-        title="Actor Type by Region (ACLED)",
-        xaxis_title="Region",
+        title="Violence Type Distribution — Top 20 Countries (UCDP GED)",
+        xaxis_title="Country",
         yaxis_title="Events",
-        legend_title="Actor Type",
-        xaxis_tickangle=-30,
+        legend_title="Violence Type",
+        xaxis_tickangle=-35,
         template="plotly_white",
     )
     out = OUT_DIR / "actor_type_by_region.html"
@@ -455,25 +464,19 @@ def chart_actor_network(df: pd.DataFrame, top_n: int = 40) -> None:
     df2 = df.dropna(subset=["actor1", "actor2"]).copy()
     df2 = df2[df2["actor2"].str.strip().ne("")]
 
-    # Actor type color mapping from inter1 code
+    # Node color: map most common violence type per actor (side_a)
     actor_type_colors = {
-        "State Military": "#e74c3c",
-        "State Police": "#e74c3c",
-        "Rebel Group": "#2ecc71",
-        "Political Militia": "#f39c12",
-        "Communal Militia": "#e67e22",
-        "Rioters/Protesters": "#3498db",
-        "Civilians": "#95a5a6",
-        "External/Other": "#9b59b6",
-        "Unknown": "#bdc3c7",
+        "State-based conflict": "#e74c3c",
+        "Non-state conflict":   "#2ecc71",
+        "One-sided violence":   "#9b59b6",
+        "Unknown":              "#bdc3c7",
     }
 
-    # Build actor -> type lookup from inter1
-    if "inter1" in df2.columns:
+    # Build actor -> violence type lookup from event_type
+    if "event_type" in df2.columns:
         actor_type_lookup = (
-            df2.groupby("actor1")["inter1"]
-            .agg(lambda x: x.mode().iloc[0] if not x.mode().empty else "")
-            .apply(_classify_actor_type)
+            df2.groupby("actor1")["event_type"]
+            .agg(lambda x: x.mode().iloc[0] if not x.mode().empty else "Unknown")
             .to_dict()
         )
     else:
@@ -956,14 +959,25 @@ def chart_source_analysis(df: pd.DataFrame) -> None:
     if not _require(df):
         return
 
-    if "source" not in df.columns:
-        log.warning("'source' column not found. Skipping source analysis.")
+    # UCDP uses `source_article`; fall back to `source` if present
+    src_col = "source_article" if "source_article" in df.columns else (
+              "source"         if "source"         in df.columns else None)
+    if src_col is None:
+        log.warning("No source column found ('source_article' or 'source'). Skipping.")
         return
 
     import plotly.graph_objects as go
 
     # ── Static PNG ─────────────────────────────────────────────────────────
-    top_sources = df["source"].value_counts().head(25)
+    # UCDP source_article is a free-text field; count by splitting on semicolons/commas
+    def _extract_sources(val):
+        """Split a UCDP source_article string into individual source tokens."""
+        if pd.isna(val):
+            return []
+        return [s.strip() for s in str(val).replace(";", ",").split(",") if s.strip()]
+
+    all_sources = df[src_col].dropna().apply(_extract_sources).explode()
+    top_sources = all_sources.value_counts().head(25)
 
     # Classify source type from name heuristics
     def _source_type(name: str) -> str:
@@ -984,10 +998,12 @@ def chart_source_analysis(df: pd.DataFrame) -> None:
         return "Local / Other Media"
 
     df2 = df.copy()
-    df2["source_type"] = df2["source"].apply(_source_type)
+    df2["_src_list"] = df2[src_col].apply(_extract_sources)
+    df2 = df2.explode("_src_list").rename(columns={"_src_list": "_source"})
+    df2["source_type"] = df2["_source"].apply(_source_type)
 
     fig, axes = plt.subplots(1, 2, figsize=(16, 8))
-    fig.suptitle("Reporting Source Analysis (ACLED)\n"
+    fig.suptitle("Reporting Source Analysis (UCDP GED)\n"
                  "Who reports the events that get coded?", fontsize=13)
 
     # Panel 1: top 25 sources
@@ -1011,24 +1027,25 @@ def chart_source_analysis(df: pd.DataFrame) -> None:
     plt.close(fig)
     log.info("Saved: %s", out_png)
 
-    # ── Interactive: source diversity by region ─────────────────────────────
-    if "region" not in df2.columns:
+    # ── Interactive: source diversity by country (UCDP has no region column) ──
+    if "country" not in df2.columns:
         return
 
     diversity = (
-        df2.groupby("region")
+        df2.groupby("country")
         .agg(
-            events=("source", "count"),
-            unique_sources=("source", "nunique"),
+            events=("_source", "count"),
+            unique_sources=("_source", "nunique"),
         )
         .reset_index()
         .assign(diversity_ratio=lambda x: (x["unique_sources"] / x["events"]).round(4))
-        .sort_values("diversity_ratio")
+        .sort_values("events", ascending=False)
+        .head(30)
     )
 
     fig2 = go.Figure()
     fig2.add_trace(go.Bar(
-        x=diversity["region"],
+        x=diversity["country"],
         y=diversity["diversity_ratio"],
         name="Source Diversity (unique sources / events)",
         marker_color="#2471a3",
@@ -1042,14 +1059,14 @@ def chart_source_analysis(df: pd.DataFrame) -> None:
     ))
     fig2.update_layout(
         title=(
-            "Source Diversity by Region — ACLED<br>"
+            "Source Diversity by Country — UCDP GED (Top 30 by Events)<br>"
             "<sub>Unique sources / event count. "
             "Lower = higher single-source dependency = higher undercount risk. "
             "Operationalises Weidmann (2016) and Davenport & Ball (2002).</sub>"
         ),
-        xaxis_title="Region",
+        xaxis_title="Country",
         yaxis_title="Diversity Ratio",
-        xaxis_tickangle=-30,
+        xaxis_tickangle=-35,
         template="plotly_white",
         height=500,
     )
@@ -1253,7 +1270,7 @@ def main():
     )
     args = parser.parse_args()
 
-    df = load_acled()
+    df = load_ucdp()
 
     targets = list(CHART_REGISTRY.keys()) if args.chart == "all" else [args.chart]
 

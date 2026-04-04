@@ -2,7 +2,7 @@
 
 A Python-based data pipeline and exploratory analysis project that ingests, stores, and
 visualizes publicly available data on armed conflict events and documented human rights
-violations, drawing from ACLED and HRDAG.
+violations, drawing from UCDP GED, HRDAG, and UNHCR. **No credentials or API keys required** — all sources are freely accessible.
 
 ---
 
@@ -16,7 +16,7 @@ violations, drawing from ACLED and HRDAG.
    - [Definition](#definition)
    - [Legal Authority](#legal-authority)
    - [Accountability Gaps & Known Blind Spots](#accountability-gaps--known-blind-spots)
-   - [Data Limitations: ACLED and HRDAG](#data-limitations-acled-and-hrdag)
+   - [Data Limitations: UCDP GED, HRDAG, and UNHCR](#data-limitations-ucdp-ged-hrdag-and-unhcr)
 6. [Visualizations](#visualizations)
 7. [The Prompt That Started This](#the-prompt-that-started-this)
 8. [Bibliography](#bibliography)
@@ -41,7 +41,7 @@ understanding.
 ### 1. Prerequisites
 
 - Python 3.10+
-- A free ACLED account ([register here](https://acleddata.com/register/)) — uses email + password (OAuth 2.0; API keys deprecated September 2025)
+- No API keys or accounts required — all data sources are public
 
 ### 2. Clone and install
 
@@ -54,35 +54,25 @@ source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### 3. Configure environment
+### 3. Run the notebook
 
-```bash
-cp .env.example .env
-# Open .env and fill in your ACLED_EMAIL and ACLED_PASSWORD
-```
-
-### 4. Ingest data
-
-```bash
-# Pulls ACLED + HRDAG data into /data/raw
-python src/ingest.py
-```
-
-> **NOTE — ACLED credentials required.** Register for free at acleddata.com. Use your
-> myACLED email + password (OAuth 2.0 — API keys were deprecated in September 2025).
-> The script will fail gracefully and print instructions if credentials are missing.
->
-> **NOTE — HRDAG data.** HRDAG's Colombia and Guatemala datasets are downloaded
-> directly from public GitHub/web URLs embedded in the script. If those URLs change,
-> the script prints instructions for a manual download fallback.
-
-### 5. Run the notebook
+Open `notebooks/01_eda.ipynb` in Jupyter — the first cell installs dependencies, and subsequent cells download all data and generate every chart automatically.
 
 ```bash
 jupyter notebook notebooks/01_eda.ipynb
 ```
 
-### 6. Generate all visualizations
+Or ingest data from the terminal:
+
+```bash
+python src/ingest.py     # downloads UCDP GED + HRDAG + UNHCR into data/raw/
+```
+
+> **NOTE — UCDP GED is ~350 MB.** The first run downloads the full GED 25.1 ZIP from Zenodo. Subsequent runs load from the cached CSV. HRDAG and UNHCR are small and fast.
+>
+> **NOTE — HRDAG fallback.** If HRDAG URLs change, the script prints manual download instructions.
+
+### 4. Generate all visualizations (optional — notebook does this automatically)
 
 ```bash
 python src/visualize.py
@@ -117,11 +107,11 @@ python src/visualize.py
 
 | Source | Coverage | Access | Format |
 |--------|----------|--------|--------|
-| [ACLED](https://acleddata.com) | Global armed conflict events, 1997–present | Free API key required | JSON → CSV |
-| [HRDAG](https://hrdag.org) | Statistical estimates of violence, primarily Latin America | Public download | CSV / Excel |
+| [UCDP GED 25.1](https://ucdp.uu.se/downloads/) | Global conflict events 1989–2024 (~350K events) | Free — Zenodo public download | ZIP → CSV |
+| [HRDAG](https://hrdag.org) | Statistical estimates of documented killings — Colombia, Guatemala | Free public download | CSV / ZIP |
+| [UNHCR](https://www.unhcr.org/refugee-statistics/) | Annual refugees + IDPs by country, 2019–2024 | Free public API | JSON → CSV |
 
-ACLED event types captured: **Battles**, **Explosions/Remote violence**,
-**Violence against civilians**, **Sexual violence**.
+UCDP violence types captured: **State-based conflict**, **Non-state conflict**, **One-sided violence** (direct attacks on civilians).
 
 ---
 
@@ -258,33 +248,33 @@ remains contested.
 
 ---
 
-### Data Limitations: ACLED and HRDAG
+### Data Limitations: UCDP GED, HRDAG, and UNHCR
 
-**ACLED (Armed Conflict Location & Event Data Project)**
+**UCDP GED (Uppsala Georeferenced Event Dataset)**
 
-ACLED is an event-based dataset that codes politically motivated violence and protest
-events worldwide from media reports, NGO communications, and research networks. Its
-strengths are near-real-time coverage, consistent event-type taxonomy, and global
-scope.
+UCDP GED codes politically organised armed violence — state-based conflict, non-state
+conflict, and one-sided violence against civilians — from 1989 to the present. Events
+are geo-coded and verified against multiple source reports before coding.
 
-*What ACLED captures:*
-- Geo-coded, date-stamped conflict events
-- Named actors and interaction types
-- Fatality estimates (often sourced from media)
-- Events back to 1997 for many regions
+*What UCDP GED captures:*
+- Geo-coded, date-stamped conflict events with lat/lon coordinates
+- Named actors (side A and side B) with conflict linkage
+- Disaggregated fatality estimates: combatant A, combatant B, civilian, unknown
+- Sub-national administrative geography (admin1, admin2)
+- Source citation for every event
 
-*What ACLED misses or undercounts:*
-- **Unreported events**: ACLED depends on source reporting. Areas with restricted
+*What UCDP GED misses or undercounts:*
+- **Unreported events**: UCDP depends on source availability. Areas with restricted
   press access (North Korea, parts of Myanmar, rural DRC) are systematically
   undercounted.
-- **Sexual violence**: ACLED added a sexual violence category in 2020, creating a
-  pre/post discontinuity that makes long-term trend analysis difficult.
-- **Event severity**: ACLED records *events*, not casualty counts with precision.
-  Fatality numbers are often disputed or unavailable.
-- **Non-violent atrocities**: Systematic starvation, forced displacement, and
-  detention-based torture rarely appear as discrete events.
-- **Coding consistency**: Different regional teams and source quality means
-  consistency varies across geographies.
+- **Sexual violence and torture**: UCDP does not code these as discrete event types.
+  Physical and non-physical violations are largely invisible to the dataset.
+- **Non-lethal atrocities**: Forced displacement, starvation, and detention appear
+  only as consequences of events, not as events themselves.
+- **Lag**: Verification takes time; the most recent months of data are provisional
+  and subject to revision.
+- **Threshold effects**: UCDP requires a minimum of 25 battle-related deaths per
+  year per conflict to include a dyad — smaller incidents may be excluded.
 
 **HRDAG (Human Rights Data Analysis Group)**
 
@@ -307,15 +297,23 @@ rigorous in the field.
 - **Non-lethal violations**: MSE methods work best for discrete, documented events
   like killings. Sexual violence, torture, and forced displacement are harder to
   enumerate this way.
-- **Perpetrator attribution uncertainty**: Even with statistical methods,
-  attributing responsibility within complex conflict environments involves
-  assumptions that carry uncertainty.
+
+**UNHCR Displacement Data**
+
+UNHCR collects annual figures on refugees, asylum-seekers, and internally displaced
+persons (IDPs) by country of origin and asylum. Displacement is a consequence of
+conflict, not a measure of it — but it is one of the few global indicators that
+captures civilian impact at scale.
+
+*Limitations:* Host-country government reporting is inconsistent; stateless persons
+may be undercounted; IDP figures rely on government cooperation.
 
 **Combined data interpretation guidance:**
 
-Reading ACLED and HRDAG together partially compensates for each source's gaps:
-ACLED provides breadth and recency; HRDAG provides depth and statistical rigor on
-undercounting. But even together, they represent a lower bound of actual violations.
+Reading UCDP and HRDAG together partially compensates for each source's gaps:
+UCDP provides global breadth and temporal depth; HRDAG provides statistical rigor on
+undercounting in specific cases. UNHCR adds a civilian displacement lens.
+But even together, they represent a lower bound of actual violations.
 Any analysis based solely on these sources should be interpreted as *what was
 documented*, not *what occurred*.
 
@@ -323,10 +321,9 @@ documented*, not *what occurred*.
 
 ## Visualizations
 
-> Previews below are generated from **synthetic data** via `src/generate_samples.py`
-> and committed to the repo so visitors can see the charts without running the pipeline.
-> Run `python src/ingest.py` → `python src/visualize.py` to generate interactive
-> Plotly/Folium versions from real ACLED data (saved to `/outputs`).
+> Chart previews are generated from **real UCDP GED data** — run the notebook or
+> `python src/ingest.py && python src/visualize.py` to produce them.
+> Interactive Plotly/Folium versions are saved to `/outputs` on each run.
 
 ---
 
@@ -396,11 +393,11 @@ documented*, not *what occurred*.
 <tr>
 <td width="50%">
 <img src="assets/images/accountability_gap.png" alt="Accountability gap"/>
-<br><sub><b>Accountability Gap</b> — top countries by ACLED event count, coloured by ICC situation status. Red = high events, no ICC situation open.</sub>
+<br><sub><b>Accountability Gap</b> — top countries by UCDP event count, coloured by ICC situation status. Red = high events, no ICC situation open.</sub>
 </td>
 <td width="50%">
 <img src="assets/images/data_completeness.png" alt="Data completeness heatmap"/>
-<br><sub><b>Data Completeness</b> — composite proxy by region and event type. Derived from RSF Press Freedom Index (2023), ACLED source tier, and Eck (2012) inter-source divergence.</sub>
+<br><sub><b>Data Completeness</b> — composite proxy by region and event type. Derived from RSF Press Freedom Index (2023), UCDP source tier, and Eck (2012) inter-source divergence.</sub>
 </td>
 </tr>
 </table>
@@ -420,7 +417,7 @@ documented*, not *what occurred*.
 </td>
 <td width="50%">
 <img src="assets/images/sub_event_breakdown.png" alt="Sub-event type breakdown"/>
-<br><sub><b>Sub-Event Breakdown</b> — tactics within each top-level event type (e.g. air strikes vs. IEDs within Explosions/Remote violence).</sub>
+<br><sub><b>Escalation Phases</b> — 30-day rolling event count for top countries globally. Interactive Plotly version with spike annotations on pipeline run.</sub>
 </td>
 </tr>
 </table>
